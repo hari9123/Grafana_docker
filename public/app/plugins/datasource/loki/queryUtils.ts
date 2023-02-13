@@ -1,7 +1,7 @@
 import { SyntaxNode } from '@lezer/common';
 import { escapeRegExp } from 'lodash';
 
-import { ArrayVector, DataFrame, DataQueryResponse, DataQueryResponseData, QueryResultMetaStat } from '@grafana/data';
+import { ArrayVector, DataFrame, DataFrameType, QueryResultMetaStat } from '@grafana/data';
 import {
   parser,
   LineFilter,
@@ -299,10 +299,10 @@ export function getStreamSelectorsFromQuery(query: string): string[] {
 
 export function requestSupportsPartitioning(allQueries: LokiQuery[]) {
   const queries = allQueries.filter((query) => !query.hide);
-  /*
-   * For now, we will not split when more than 1 query is requested.
-   */
-  if (queries.length > 1) {
+
+  // just a sanity check, otherwise scenarios with a single hidden query
+  // will crash the code.
+  if (queries.length === 0) {
     return false;
   }
 
@@ -310,24 +310,38 @@ export function requestSupportsPartitioning(allQueries: LokiQuery[]) {
     return false;
   }
 
+  // do not chunk metrics queries which have a non-default resolution
+  if (queries.some((q) => (q.resolution ?? 1) !== 1)) {
+    return false;
+  }
+
   return true;
 }
 
-export function combineResponses(currentResult: DataQueryResponse | null, newResult: DataQueryResponse) {
-  if (!currentResult) {
-    return newResult;
-  }
-
-  newResult.data.forEach((newFrame) => {
-    const currentFrame = currentResult.data.find((frame) => frame.name === newFrame.name);
+export function combineMetricsResponses(currentResult: Map<string, DataFrame[]>, newResult: DataFrame[]): void {
+  newResult.forEach((newFrame) => {
+    const refId = newFrame.refId ?? ''; // FIXME: should we just skip frames without a refId?
+    const currentFrames = currentResult.get(refId) ?? [];
+    currentResult.set(refId, currentFrames); // to set the potentially new empty-array
+    const currentFrame = currentFrames.find((frame) => frame.name === newFrame.name);
     if (!currentFrame) {
-      currentResult.data.push(newFrame);
+      currentFrames.push(newFrame);
       return;
     }
     combineFrames(currentFrame, newFrame);
   });
+}
 
-  return currentResult;
+export function combineLogsResponses(currentResult: Map<string, DataFrame>, newResult: DataFrame[]): void {
+  newResult.forEach((newFrame) => {
+    const refId = newFrame.refId ?? ''; // FIXME: should we just skip frames without a refId?
+    const currentFrame = currentResult.get(refId);
+    if (!currentFrame) {
+      currentResult.set(refId, newFrame);
+      return;
+    }
+    combineFrames(currentFrame, newFrame);
+  });
 }
 
 function combineFrames(dest: DataFrame, source: DataFrame) {
