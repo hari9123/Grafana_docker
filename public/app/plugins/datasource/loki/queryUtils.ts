@@ -1,7 +1,7 @@
 import { SyntaxNode } from '@lezer/common';
 import { escapeRegExp } from 'lodash';
 
-import { DataQueryResponse, DataQueryResponseData, QueryResultMetaStat } from '@grafana/data';
+import { DataQueryResponse, DataFrame, QueryResultMetaStat, ArrayVector } from '@grafana/data';
 import {
   parser,
   LineFilter,
@@ -330,16 +330,18 @@ export function combineResponses(currentResult: DataQueryResponse | null, newRes
   return currentResult;
 }
 
-function combineFrames(dest: DataQueryResponseData, source: DataQueryResponseData) {
+function combineFrames(dest: DataFrame, source: DataFrame) {
   const totalFields = dest.fields.length;
   for (let i = 0; i < totalFields; i++) {
-    dest.fields[i].values.buffer = [].concat.apply(source.fields[i].values.buffer, dest.fields[i].values.buffer);
+    dest.fields[i].values = new ArrayVector(
+      [].concat.apply(source.fields[i].values.toArray(), dest.fields[i].values.toArray())
+    );
   }
   dest.length += source.length;
   combineMetadata(dest, source);
 }
 
-function combineMetadata(dest: DataQueryResponseData = {}, source: DataQueryResponseData = {}) {
+function combineMetadata(dest: DataFrame, source: DataFrame) {
   if (!source.meta?.stats) {
     return;
   }
@@ -351,7 +353,7 @@ function combineMetadata(dest: DataQueryResponseData = {}, source: DataQueryResp
     return;
   }
   dest.meta.stats.forEach((destStat: QueryResultMetaStat, i: number) => {
-    const sourceStat = source.meta.stats?.find(
+    const sourceStat = source.meta?.stats?.find(
       (sourceStat: QueryResultMetaStat) => destStat.displayName === sourceStat.displayName
     );
     if (sourceStat) {
